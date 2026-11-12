@@ -1,0 +1,220 @@
+<?xml version='1.0' encoding='windows-1252'?>
+<!--
+  RustedPdf installer.
+
+  Built with `cargo wix` (see PACKAGING.md). The one thing that makes this
+  installer necessary rather than optional: RustedPdf is *not* a single-file
+  app. It binds to PDFium at runtime and looks for the library next to its own
+  executable, so `pdfium.dll` has to be installed alongside `RustedPdf.exe` —
+  that's the `PdfiumLibrary` component below. Shipping the exe on its own gives
+  an app that starts and then can't open anything.
+
+  Variables supplied by `cargo wix` at build time:
+    CargoTargetBinDir = target\release (where the exe and the copied DLL live)
+    Version           = the package version from Cargo.toml
+-->
+
+<?if $(sys.BUILDARCH) = x64 or $(sys.BUILDARCH) = arm64 ?>
+    <?define PlatformProgramFilesFolder = "ProgramFiles64Folder" ?>
+<?else ?>
+    <?define PlatformProgramFilesFolder = "ProgramFilesFolder" ?>
+<?endif ?>
+
+<Wix xmlns='http://schemas.microsoft.com/wix/2006/wi'>
+
+    <Product
+        Id='*'
+        Name='RustedPdf'
+        UpgradeCode='0B7234BF-9E96-436D-A02E-CA1102258E4A'
+        Manufacturer='RustedPdf'
+        Language='1033'
+        Codepage='1252'
+        Version='$(var.Version)'>
+
+        <Package Id='*'
+            Keywords='Installer'
+            Description='RustedPdf — a cross-platform PDF reader and highlighter'
+            Manufacturer='RustedPdf'
+            InstallerVersion='450'
+            Languages='1033'
+            Compressed='yes'
+            InstallScope='perMachine'
+            SummaryCodepage='1252'/>
+
+        <MajorUpgrade
+            Schedule='afterInstallInitialize'
+            DowngradeErrorMessage='A newer version of [ProductName] is already installed. Setup will now exit.'/>
+
+        <Media Id='1' Cabinet='media1.cab' EmbedCab='yes' DiskPrompt='CD-ROM #1'/>
+        <Property Id='DiskPrompt' Value='RustedPdf Installation'/>
+
+        <Directory Id='TARGETDIR' Name='SourceDir'>
+            <Directory Id='$(var.PlatformProgramFilesFolder)' Name='PFiles'>
+                <Directory Id='APPLICATIONFOLDER' Name='RustedPdf'>
+
+                    <!-- PDFium is third-party and redistributed, so its licence
+                         ships with it. -->
+                    <Component Id='PdfiumLicense' Guid='*'>
+                        <File
+                            Id='PdfiumLicenseFile'
+                            Name='PDFIUM-LICENSE.txt'
+                            DiskId='1'
+                            Source='vendor\pdfium\LICENSE'
+                            KeyPath='yes'/>
+                    </Component>
+
+                    <Directory Id='Bin' Name='bin'>
+                        <Component Id='Path' Guid='5A2679CB-0637-4519-B338-6BC9CAE40C75' KeyPath='yes'>
+                            <Environment
+                                Id='PATH'
+                                Name='PATH'
+                                Value='[Bin]'
+                                Permanent='no'
+                                Part='last'
+                                Action='set'
+                                System='yes'/>
+                        </Component>
+
+                        <Component Id='binary0' Guid='*'>
+                            <File
+                                Id='exe0'
+                                Name='RustedPdf.exe'
+                                DiskId='1'
+                                Source='$(var.CargoTargetBinDir)\RustedPdf.exe'
+                                KeyPath='yes'/>
+                        </Component>
+
+                        <!-- The PDF engine. Must land in the same directory as
+                             the exe: `pdf::engine` searches the executable's
+                             own folder first. -->
+                        <Component Id='PdfiumLibrary' Guid='*'>
+                            <File
+                                Id='pdfium'
+                                Name='pdfium.dll'
+                                DiskId='1'
+                                Source='$(var.CargoTargetBinDir)\pdfium.dll'
+                                KeyPath='yes'/>
+                        </Component>
+
+                        <!-- Puts RustedPdf in the "Open with" menu for PDFs for
+                             everyone on the machine. It does not become the
+                             default handler; that stays the user's choice, and
+                             Settings ▸ File manager can add a per-user entry
+                             too. Uninstalling removes all of this. -->
+                        <Component Id='OpenWithReg' Guid='45240456-0D22-406F-ACC2-554E02AD6FCF'>
+                            <!-- ForceDeleteOnUninstall: take the whole subtree,
+                                 not just the values. An empty key left behind
+                                 still shows RustedPdf in Explorer's Open with
+                                 list, pointing at an executable that is gone. -->
+                            <RegistryKey Root='HKLM' Key='SOFTWARE\Classes\Applications\RustedPdf.exe'
+                                ForceDeleteOnUninstall='yes'>
+                                <RegistryValue Name='FriendlyAppName' Value='RustedPdf' Type='string' KeyPath='yes'/>
+                                <RegistryKey Key='DefaultIcon'>
+                                    <RegistryValue Value='"[#exe0]",0' Type='string'/>
+                                </RegistryKey>
+                                <RegistryKey Key='shell\open\command'>
+                                    <RegistryValue Value='"[#exe0]" "%1"' Type='string'/>
+                                </RegistryKey>
+                                <RegistryKey Key='SupportedTypes'>
+                                    <RegistryValue Name='.pdf' Value='' Type='string'/>
+                                </RegistryKey>
+                            </RegistryKey>
+                            <RegistryKey Root='HKLM' Key='SOFTWARE\Classes\.pdf\OpenWithList\RustedPdf.exe'
+                                ForceCreateOnInstall='yes' ForceDeleteOnUninstall='yes'/>
+                        </Component>
+                    </Directory>
+                </Directory>
+            </Directory>
+
+            <Directory Id='ProgramMenuFolder'>
+                <Directory Id='ApplicationProgramsFolder' Name='RustedPdf'>
+                    <Component Id='ApplicationShortcut' Guid='*'>
+                        <Shortcut Id='AppStartMenuShortcut'
+                            Name='RustedPdf'
+                            Description='RustedPdf — read and highlight PDFs'
+                            Target='[#exe0]'
+                            WorkingDirectory='Bin'
+                            Icon='ProductICO'/>
+                        <RemoveFolder Id='CleanUpShortCut' Directory='ApplicationProgramsFolder' On='uninstall'/>
+                        <RegistryValue Root='HKCU' Key='Software\RustedPdf' Name='installed' Type='integer' Value='1' KeyPath='yes'/>
+                    </Component>
+                </Directory>
+            </Directory>
+        </Directory>
+
+        <Feature
+            Id='Binaries'
+            Title='Application'
+            Description='Installs RustedPdf, the PDFium engine it needs, and a Start menu shortcut.'
+            Level='1'
+            ConfigurableDirectory='APPLICATIONFOLDER'
+            AllowAdvertise='no'
+            Display='expand'
+            Absent='disallow'>
+
+            <ComponentRef Id='binary0'/>
+            <!-- Not optional: without it the app cannot open a document. -->
+            <ComponentRef Id='PdfiumLibrary'/>
+            <ComponentRef Id='PdfiumLicense'/>
+            <ComponentRef Id='OpenWithReg'/>
+            <ComponentRef Id='ApplicationShortcut'/>
+
+            <Feature
+                Id='Environment'
+                Title='PATH Environment Variable'
+                Description='Add the install location to the PATH, so RustedPdf can be run from a terminal.'
+                Level='1'
+                Absent='allow'>
+                <ComponentRef Id='Path'/>
+            </Feature>
+        </Feature>
+
+        <!-- The registry above is the installer's own, and goes when it does.
+             Settings ▸ File manager writes a *second*, per-user registration
+             under HKEY_CURRENT_USER, which a per-machine uninstall cannot see
+             and would otherwise leave pointing at a deleted executable. The
+             app knows where it put it, so it is asked to take it back.
+
+             Deferred but impersonated, so HKCU is the HKCU of the person doing
+             the uninstall rather than the SYSTEM account's; before RemoveFiles,
+             while there is still an executable to run; and Return='ignore',
+             because a leftover menu entry must never be the reason an uninstall
+             fails. The UPGRADINGPRODUCTCODE guard keeps a version upgrade —
+             which uninstalls the old build on the way in — from quietly
+             stripping a registration the user asked for. -->
+        <CustomAction Id='RemoveUserShellIntegration'
+            FileKey='exe0'
+            ExeCommand='--unregister-shell'
+            Execute='deferred'
+            Impersonate='yes'
+            Return='ignore'/>
+
+        <InstallExecuteSequence>
+            <Custom Action='RemoveUserShellIntegration' Before='RemoveFiles'>
+                REMOVE="ALL" AND NOT UPGRADINGPRODUCTCODE
+            </Custom>
+        </InstallExecuteSequence>
+
+        <!-- Shown in Add/Remove Programs and on the Start menu shortcut. -->
+        <Icon Id='ProductICO' SourceFile='assets\icon.ico'/>
+        <Property Id='ARPPRODUCTICON' Value='ProductICO'/>
+
+        <SetProperty Id='ARPINSTALLLOCATION' Value='[APPLICATIONFOLDER]' After='CostFinalize'/>
+
+        <Property Id='ARPHELPLINK' Value='https://github.com/'/>
+
+        <UI>
+            <UIRef Id='WixUI_FeatureTree'/>
+        </UI>
+
+        <!-- Offer to launch when the installer finishes. -->
+        <Property Id='WIXUI_EXITDIALOGOPTIONALCHECKBOXTEXT' Value='Launch RustedPdf' />
+        <Property Id='WixShellExecTarget' Value='[#exe0]' />
+        <CustomAction Id='LaunchApplication' BinaryKey='WixCA' DllEntry='WixShellExec' Impersonate='yes' />
+        <UI>
+            <Publish Dialog='ExitDialog' Control='Finish' Event='DoAction' Value='LaunchApplication'>
+                WIXUI_EXITDIALOGOPTIONALCHECKBOX = 1 and NOT Installed
+            </Publish>
+        </UI>
+    </Product>
+</Wix>

@@ -1,0 +1,9 @@
+# Build output
+/target/
+
+# Local tooling, kept on disk but not published
+/.claude/
+/.cargo/
+
+# Half-written saves, should a crash leave one behind
+*.rustedpdf-tmp
